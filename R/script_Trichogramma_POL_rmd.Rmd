@@ -1,0 +1,1048 @@
+---
+title: "Analysis code for 'Life history traits, pace-of-life and dispersal among and within five species of *Trichogramma*: a comparative analysis'"
+author: "Chloé GUICHARNAUD, Géraldine Groussier, Erwan Beranger, Laurent Lamy, Maxime Dahirel, Elodie Vercken"
+date: 
+output:
+  html_document:
+  df_print: paged
+  html_notebook: default
+  pdf_document: default
+  editor_options:
+    chunk_output_type: console
+  chunk_output_type: inline
+---
+
+## Download necessary libraries
+
+```{r load-packages, warning= FALSE, message = FALSE}
+library(here)      # CRAN 1.0.1
+
+library(tidyverse) # CRAN 1.3.2
+
+library(cmdstanr)  # [github::stan-dev/cmdstanr] 0.5.2 ## Stan backend
+library(brms)      # CRAN 2.17.0
+library(bayesplot) # CRAN 1.9.0
+library(tidybayes) # CRAN 3.0.2
+library(patchwork) # CRAN 1.1.2
+library(ggtext)    # CRAN 0.1.2 
+
+options(mc.cores = 4)
+
+here::i_am("R/script_Trichogramma_POL_rmd.Rmd")
+```
+
+## Data loading and prep
+
+### Import dataset
+
+```{r load-data}
+
+data_Trichogramma <- read_csv(here("data","data_Trichogramma.csv"))
+```
+
+This dataset contains:
+
+-   `species` : name of the *Trichogramma* species (one of 5)
+-   `line` : name of the *Trichogramma* line (one of 32)
+-   `replicate` : replicate number among lines
+-   `type` : `F` for single-vial system, `D` for two-vial systems
+-   `block` : temporal blocks
+-   `date_start` : date when females where placed in the experimental system
+-   `date_emerging` : first emerging descendant observed date
+-   `hour_emerging` : first emerging descendant observed hour
+-   `total_hours` : observed time in hour between earliest start of the experiment (date_start, at 9 am) and observed emerging hour
+-   `lowbound` : low bound of observed developmental time interval (in days)
+-   `upbound` : up bound of observed developmental time interval (in days)
+-   `dispersal_status` : `null_disp` for single-vial system, no dispersal possible `yes_disp` for dispersed replicates in two-vial systems `no_disp` for non-dispersed replicates in two-vial systems
+-   `nb_egg` : number of parazitized host eggs counted
+
+### Adding columns for running models
+
+To run our models, we need to add some information to our dataset:
+
+-   For development time observations, precise the type of censoring (here, interval censoring for everything)
+-   Transform `dispersal_status` into something that says in model-understandable terms if a valid dispersal observation was made and the result (0,1,NA)
+-   Because the 2-vial data are not used to analyse fecundity and development time, add variables that will be used in `brm()` along with `subset()` to specify which row is valid to use in the model for each variable of interest
+
+```{r data-update}
+
+# Add censoring info
+data_Trichogramma$censore <- "interval"
+
+# Clarify dispersal
+data_Trichogramma <- data_Trichogramma |>
+  mutate(dispersal = case_when(
+    dispersal_status == "yes_disp" ~ 1,
+    dispersal_status == "no_disp" ~ 0,
+    dispersal_status == "null_disp" ~ NA_real_,
+    TRUE ~ NA_real_
+  ))
+
+# Add valid subsetting variables for development, dispersal and fecundity.
+
+data_Trichogramma <- data_Trichogramma |>
+  mutate(
+    # development times are usable here if they come from the 1 vial experiments and have non-NA emergence dates
+    valid_development = case_when(
+      is.na(date_emerging) == FALSE & type == "F" ~ 1,
+      TRUE ~ 0
+    ),
+    # fecundities are usable if they come from the 1 vial experiments and have non-NA egg numbers
+    valid_fecundity = case_when(
+      is.na(nb_egg) == FALSE & type == "F" ~ 1,
+      TRUE ~ 0
+    ),
+    # dispersal are only valid in the 2-vial systems
+    valid_dispersal = case_when(
+      is.na(dispersal) == FALSE ~ 1,
+      TRUE ~ 0
+    ),
+  )
+```
+
+## Models
+
+### Choice of families
+
+Dispersal data are binary, so a Bernoulli model is really the only choice. Development times are time to event data, so a lognormal model should be appropriate at least at first. Fecundity are counts, so a Poisson model should be a good start. However:
+
+```{r}
+hist(subset(data_Trichogramma$nb_egg, data_Trichogramma$valid_fecundity == 1))
+mean(subset(data_Trichogramma$nb_egg, data_Trichogramma$valid_fecundity == 1))
+var(subset(data_Trichogramma$nb_egg, data_Trichogramma$valid_fecundity == 1))
+```
+
+there is some hints of overdispersion and/or zero-inflation. These are not conclusive (it could be high between-line heterogeneity) but worth considering.
+
+### prior setting
+
+To run our models, we need to specify priors for our three response variables. Priors for random effects and correlation matrices will be standard ones. Priors for the fixed-effects intercepts (species-specific or not) will also be standard for the dispersal models (since these are binary data on a standard 0-1 scale); but they need to be scaled for the fecundity and development time data. We suggest to use the median values as a scaling factor for the priors:
+
+```{r median-values}
+
+# development time
+median(subset(data_Trichogramma$lowbound, data_Trichogramma$valid_development == 1)) # = 11
+
+# fecundity
+median(subset(data_Trichogramma$nb_egg, data_Trichogramma$valid_fecundity == 1)) # = 19
+```
+
+### Family choice for fecundity
+
+We tried a first univariate negative binomial model for fecundity:
+
+```{r fecundity-inflated, warning= FALSE, message= FALSE, results = 'hide'}
+
+bf_fecundity_negbino <- bf(nb_egg | subset(valid_fecundity) ~ 0 + species + (1 | p | line), family = "negbinomial")
+
+prior_fecundity_negbino <- c(
+  set_prior("normal(0,1)", class = "sd"),
+  set_prior("normal(log(19),1)", class = "b") # the median info is used on the log scale because of the log link for the negbinomial model
+)
+
+mod_fecundity_negbino <- brm(
+  bf_fecundity_negbino,
+  data = data_Trichogramma,
+  prior = prior_fecundity_negbino,
+  seed = 404,
+  warmup = 2000, iter = 4500, chains = 4,
+  backend = "cmdstanr"
+)
+```
+
+There may be some divergences, but we'll let them pass for now, because:
+
+```{r fecundity check}
+
+pp_check(mod_fecundity_negbino, ndraws = 150) # ok for range, but not for peak height
+pp_check(mod_fecundity_negbino, "ecdf_overlay", ndraws = 150) # ok for range, but not for peak height
+```
+
+Posterior does not correctly fit observations, where two peaks are present, one representing an overabundance of 0. It is especially bad catching the correct number of zeroes. Therefore, a zero-inflated negative binomial function is used in multivariate models.
+
+### Main models
+
+**Model 1**
+
+The first model take into account inter and intra specific line covariation:
+
+```{r}
+# priors
+
+prior1 <- c(
+  # development prior
+  set_prior("normal(log(11),1)", class = "b", resp = "lowbound"),
+  set_prior("normal(0,1)", class = "sd", resp = "lowbound"),
+  set_prior("normal(0,1)", class = "sigma", resp = "lowbound"),
+
+  # fecundity prior
+  set_prior("normal(log(19),1)", class = "b", resp = "nbegg"),
+  set_prior("normal(0,1.5)", class = "b", dpar = "zi", resp = "nbegg"),
+  set_prior("normal(0,1)", class = "sd", resp = "nbegg"),
+  set_prior("normal(0,1)", class = "b", nlpar = "invshape", lb = 0, resp = "nbegg"),
+
+  # dispersal prior
+  set_prior("normal(0,1.5)", class = "b", resp = "dispersal"),
+  set_prior("normal(0,1)", class = "sd", resp = "dispersal"),
+
+  # covariation
+  set_prior("lkj(2)", class = "cor")
+)
+```
+
+```{r}
+# formulas
+
+bf_fecundity_0inflated1 <- bf(nb_egg | subset(valid_fecundity) ~ 0 + species + (1 | p | line), # fecundity without 0 inflation
+  zi ~ 0 + species + (1 | p | line), # zi: new variable for nbegg=0
+  nlf(shape ~ 1 / invshape), # nlf = specify non linear formula to brms
+  invshape ~ 1,
+  # use invshape so generic priors are easier to set (see https://github.com/stan-dev/stan/wiki/Prior-Choice-Recommendations, the case of negative binomial)
+  family = "zero_inflated_negbinomial"(link_shape = "identity")
+) # fixing the link for shape to identity despite the use of a formula (which would otherwise make it default to log link) is important for correct prior setting
+
+bf_dvlpmt_cens1 <- bf(lowbound | cens(censore, upbound) + subset(valid_development) ~ 0 + species + (1 | p | line), family = "lognormal")
+
+bf_dispersal1 <- bf(dispersal | subset(valid_dispersal) ~ 0 + species + (1 | p | line), family = "bernoulli")
+```
+
+```{r multivariate model 1, warning= FALSE, message= FALSE, results = 'hide'}
+
+if (file.exists(here("R_output", "modeld1.Rdata"))) {
+  load(here("R_output", "model1.Rdata"))
+} else {
+  model1 <- brm(
+    mvbf(bf_fecundity_0inflated1 + bf_dvlpmt_cens1 + bf_dispersal1),
+    data = data_Trichogramma,
+    prior = prior1,
+    seed = 404,
+    warmup = 2000, iter = 4500, chains = 4,
+    backend = "cmdstanr"
+  )
+
+  save(list = "model1", file = here("R_output", "model1.Rdata"))
+}
+```
+
+**Model 2**
+
+To be able to more fully describe covariation patterns between lines, the second model removes species-level effects, so removes the partition that was made between within-species and among-species line level covariation
+
+```{r}
+# priors
+
+prior2 <- c(
+  # development prior
+  set_prior("normal(log(11),1)", class = "Intercept", resp = "lowbound"),
+  set_prior("normal(0,1)", class = "sd", resp = "lowbound"),
+  set_prior("normal(0,1)", class = "sigma", resp = "lowbound"),
+
+  # fecundity prior
+  set_prior("normal(log(19),1)", class = "Intercept", resp = "nbegg"),
+  set_prior("normal(0,1.5)", class = "Intercept", dpar = "zi", resp = "nbegg"),
+  set_prior("normal(0,1)", class = "sd", resp = "nbegg"),
+  set_prior("normal(0,1)", class = "b", nlpar = "invshape", lb = 0, resp = "nbegg"),
+
+
+  # dispersal prior
+  set_prior("normal(0,1.5)", class = "Intercept", resp = "dispersal"),
+  set_prior("normal(0,1)", class = "sd", resp = "dispersal"),
+
+  # covariation
+  set_prior("lkj(2)", class = "cor")
+)
+```
+
+```{r}
+# formula
+
+bf_fecundity_0inflated2 <- bf(nb_egg | subset(valid_fecundity) ~ (1 | p | line),
+  zi ~ (1 | p | line),
+  nlf(shape ~ 1 / invshape),
+  invshape ~ 1,
+  family = "zero_inflated_negbinomial"(link_shape = "identity")
+)
+
+bf_dvlpmt_cens2 <- bf(lowbound | cens(censore, upbound) + subset(valid_development) ~ (1 | p | line), family = "lognormal")
+
+bf_dispersal2 <- bf(dispersal | subset(valid_dispersal) ~ (1 | p | line), family = "bernoulli")
+```
+
+```{r multivariate model 2, warning= FALSE, message= FALSE, results = 'hide'}
+
+
+if (file.exists(here("R_output", "model2.Rdata"))) {
+  load(here("R_output", "model2.Rdata"))
+} else {
+  model2 <- brm(
+    mvbf(bf_fecundity_0inflated2 + bf_dvlpmt_cens2 + bf_dispersal2),
+    data = data_Trichogramma,
+    prior = prior2,
+    seed = 404,
+    warmup = 2000, iter = 4500, chains = 4,
+    backend = "cmdstanr"
+  )
+
+  save(list = "model2", file = here("R_output", "model2.Rdata"))
+}
+```
+
+### various model checks and diagnostics
+
+Now, let's quickly check models' results
+
+```{r}
+summary(model1) # check for ESS and Rhat
+summary(model2)
+```
+
+```{r}
+# convergence/stationarity checks
+plot(model1) # MCMC seem to overlap nicely
+plot(model2)
+```
+
+```{r post model check, warning= FALSE, message= FALSE }
+
+# fecundity:
+pp_check(model1, resp = "nbegg", ndraws = 150) # follows the curve but fails to correctly present the dip between ZI and mean fecundity
+# but it does capture the correct % of zeroes
+## note: if you re-run the model using a ZI Poisson instead, the dip is better but the model performs way worse in other aspects (model comparison using WAIC/LOO), reflecting existing overdispersion. So that's probably as good as one can get without more information (prior or data)
+pp_check(model2, resp = "nbegg", ndraws = 150)
+pp_check(model1, resp = "nbegg", type = "ecdf_overlay", ndraws = 150)
+pp_check(model2, resp = "nbegg", type = "ecdf_overlay", ndraws = 150)
+pp_check(model1, resp = "nbegg", type = "stat_2d")
+pp_check(model2, resp = "nbegg", type = "stat_2d")
+
+
+# dispersal (but due to binary type, unlikely to be very informative, most checks should always perform well)
+pp_check(model1, resp = "dispersal", ndraws = 150)
+pp_check(model2, resp = "dispersal", ndraws = 150)
+
+# development time
+
+# there are no good simple way to use pp_check for interval censored data.
+# but we can get *some* information by being creative
+
+source <- data_Trichogramma |>
+  filter(valid_development == 1)
+
+yrep1 <- posterior_predict(model1, resp = "lowbound", summary = FALSE) # posterior predictive distribution of data
+
+ppc_intervals_data(source$lowbound, yrep = yrep1) |>
+  mutate(lowbound_obs = y_obs, upbound_obs = source$upbound) |>
+  arrange(lowbound_obs) |>
+  mutate(x = row_number()) |>
+  ggplot() +
+  geom_ribbon(aes(x, ymin = lowbound_obs, ymax = upbound_obs), fill = "blue", alpha = 0.5) +
+  geom_pointinterval(aes(x, y = m, ymin = ll, ymax = hh)) +
+  scale_y_continuous("development time") +
+  scale_x_continuous("rank order (observed)")
+
+# in this plot the ribbon denotes the observed data (the 2 day interval)
+# and the points and error bars represents the posterior mean prediction and CI95 (quantile interval)
+# we can see that the model does a decent job at matching the data (not many points are outside the observed range, and for the majority of the predictions where the point/mean is outside the observed range, the CI is comfortably overlapping it)
+
+yrep2 <- posterior_predict(model2, resp = "lowbound", summary = FALSE) # posterior predictive distribution of data
+
+ppc_intervals_data(source$lowbound, yrep = yrep2) |>
+  mutate(lowbound_obs = y_obs, upbound_obs = source$upbound) |>
+  arrange(lowbound_obs) |>
+  mutate(x = row_number()) |>
+  ggplot() +
+  geom_ribbon(aes(x, ymin = lowbound_obs, ymax = upbound_obs), fill = "blue", alpha = 0.5) +
+  geom_pointinterval(aes(x, y = m, ymin = ll, ymax = hh)) +
+  scale_y_continuous("development time") +
+  scale_x_continuous("rank order (observed)")
+
+# Building on this, one can probably think of other ways to check that the model does well for development time, despite the interval censoring barrier
+```
+
+## predictions and plots
+
+### generation
+
+We create posterior datasets for the 2 models
+
+```{r post-model dataset, warning= FALSE, message= FALSE}
+# Create posterior dataset for the first model
+
+unique_lines <- data_Trichogramma |>
+  select(species, line) |>
+  distinct() |>
+  mutate(valid_development = 1, valid_dispersal = 1, valid_fecundity = 1) # need all subset columns
+
+modcens1_data_dvlp <- unique_lines |>
+  add_epred_draws(model1, resp = "lowbound") |>
+  rename(development_time = .epred)
+
+
+modcens1_data_disp <- unique_lines |>
+  add_epred_draws(model1, resp = "dispersal") |>
+  rename(dispersal_rate = .epred)
+
+
+modcens1_data_fec <- unique_lines |>
+  add_epred_draws(model1, resp = "nbegg", dpar = c("zi", "mu")) |>
+  rename(fecundity = .epred)
+
+
+model1_data <- modcens1_data_dvlp |>
+  left_join(modcens1_data_disp) |>
+  left_join(modcens1_data_fec) |>
+  subset(select = -c(.iteration, .chain, .row, valid_development, valid_dispersal, valid_fecundity))
+
+
+modcens2_data_dvlp <- unique_lines |>
+  add_epred_draws(model2, resp = "lowbound") |>
+  rename(development_time = .epred)
+
+
+modcens2_data_disp <- unique_lines |>
+  add_epred_draws(model2, resp = "dispersal") |>
+  rename(dispersal_rate = .epred)
+
+
+modcens2_data_fec <- unique_lines |>
+  add_epred_draws(model2, resp = "nbegg", dpar = c("zi", "mu")) |>
+  rename(fecundity = .epred)
+
+
+model2_data <- modcens2_data_dvlp |>
+  left_join(modcens2_data_disp) |>
+  left_join(modcens2_data_fec) |>
+  subset(select = -c(.iteration, .chain, .row, valid_development, valid_dispersal, valid_fecundity))
+```
+
+Here, only fixed effect posterior are kept to have species-level trait values
+
+```{r posterior fixed effects only}
+
+unique_species <- data_Trichogramma |>
+  select(species) |>
+  distinct() |>
+  mutate(valid_development = 1, valid_dispersal = 1, valid_fecundity = 1) # need all subset columns
+
+# Create posterior dataset for the first model
+
+fixed_data_dvlp <- unique_species |>
+  mutate(valid_development = 1, valid_dispersal = 1, valid_fecundity = 1) |> # need all subset columns
+  add_epred_draws(model1, resp = "lowbound", re_formula = NA) |>
+  rename(development_time = .epred)
+
+
+fixed_data_disp <- unique_species |>
+  mutate(valid_dispersal = 1, valid_fecundity = 1, valid_development = 1) |>
+  add_epred_draws(model1, resp = "dispersal", re_formula = NA) |>
+  rename(dispersal_rate = .epred)
+
+
+fixed_data_fec <- unique_species |>
+  mutate(valid_fecundity = 1, valid_development = 1, valid_dispersal = 1) |>
+  add_epred_draws(model1, resp = "nbegg", dpar = c("zi", "mu"), re_formula = NA) |>
+  rename(fecundity = .epred)
+
+
+fixed_data <- fixed_data_dvlp |>
+  left_join(fixed_data_disp) |>
+  left_join(fixed_data_fec) |>
+  subset(select = -c(.iteration, .chain, .row, valid_development, valid_dispersal, valid_fecundity))
+```
+
+### Table 1: species level (fixed effects) predictions, summary table
+
+```{r traits values}
+## fixed trait table, fixed effect only (table 1)
+
+table_trait_values_development <- fixed_data |>
+  group_by(species) |>
+  mean_hdi(development_time) |>
+  mutate(development_time = paste(round(development_time, 2), " [", round(.lower, 2), "; ", round(.upper, 2), "]", sep = "")) |>
+  select(-c(.lower, .upper, .width, .point, .interval))
+
+table_trait_values_fecundity <- fixed_data |>
+  group_by(species) |>
+  mean_hdi(mu) |>
+  mutate(fecundity_no_retention = paste(round(mu, 2), " [", round(.lower, 2), "; ", round(.upper, 2), "]", sep = "")) |>
+  select(-c(.lower, .upper, .width, .point, .interval, mu))
+
+table_trait_values_retention <- fixed_data |>
+  group_by(species) |>
+  mean_hdi(zi) |>
+  mutate(retention_probability = paste(round(zi, 2), " [", round(.lower, 2), "; ", round(.upper, 2), "]", sep = "")) |>
+  select(-c(.lower, .upper, .width, .point, .interval, zi))
+
+table_trait_values_dispersal <- fixed_data |>
+  group_by(species) |>
+  mean_hdi(dispersal_rate) |>
+  mutate(dispersal_rate = paste(round(dispersal_rate, 2), " [", round(.lower, 2), "; ", round(.upper, 2), "]", sep = "")) |>
+  select(-c(.lower, .upper, .width, .point, .interval))
+
+
+table1 <- left_join(table_trait_values_development, table_trait_values_fecundity) |>
+  left_join(table_trait_values_retention) |>
+  left_join(table_trait_values_dispersal)
+
+table1
+```
+
+### pairwise differences between species (for "significantly different" markers on table 1)
+
+```{r compare test, eval = FALSE}
+
+species_compare <- fixed_data |>
+  pivot_longer(cols = c(development_time, dispersal_rate, fecundity, zi, mu), names_to = "trait") |>
+  group_by(trait) |>
+  compare_levels(variable = value, by = species) |>
+  group_by(trait, species) |>
+  mean_hdi()
+
+print(species_compare, n = Inf)
+
+# one can also do it by line (commented out because takes some time, there are a lot of pairwise comparisons between 28 lines)
+# lines_compare <- model1_data |>
+#  pivot_longer(cols=c(development_time,dispersal_rate,fecundity,zi,mu), names_to = "trait") |>
+#  group_by(trait) |>
+#  compare_levels(variable=value,by=line) |>
+#  group_by(trait,line) |>
+#  mean_hdi()
+```
+
+### Figure 2: species and line level posterior per trait
+
+```{r plot trait values}
+species_palette <- c("#E69F00", "#56B4E9", "#009E73", "#F0E442", "#CC79A7")
+# colour palette for species
+
+## plot posterior traits values per species (fixed effects only), with posterior lines values as boxplot
+model1_data$full_species <- paste0("*T. ", model1_data$species, "*")
+fixed_data$full_species <- paste0("*T. ", fixed_data$species, "*")
+
+## observed means for plotting (approximated for development and fecundity variables)
+observed_species_disp <- data_Trichogramma |>
+  filter(valid_dispersal == 1) |>
+  group_by(species) |>
+  summarise(disp = mean(dispersal)) |>
+  mutate(full_species = paste0("*T. ", species, "*"))
+
+observed_species_dev <- data_Trichogramma |>
+  filter(valid_development == 1) |>
+  group_by(species) |>
+  summarise(time = mean((upbound + lowbound) / 2)) |>
+  mutate(full_species = paste0("*T. ", species, "*"))
+
+observed_species_zi <- data_Trichogramma |>
+  filter(valid_fecundity == 1) |>
+  group_by(species) |>
+  summarise(zi = mean(nb_egg == 0)) |>
+  mutate(full_species = paste0("*T. ", species, "*"))
+
+observed_species_mu <- data_Trichogramma |>
+  filter(valid_development == 1 & nb_egg > 0) |>
+  group_by(species) |>
+  summarise(mu = mean(nb_egg)) |>
+  mutate(full_species = paste0("*T. ", species, "*"))
+
+
+
+plot_dispersal <- ggplot() +
+  stat_pointinterval(
+    data = model1_data,
+    aes(full_species, dispersal_rate, group = line),
+    col = "grey70",
+    position = position_jitter(seed = 404, width = 0.4),
+    .width = 0.95
+  ) +
+  stat_eye(
+    data = fixed_data,
+    aes(full_species, dispersal_rate, fill = species),
+    slab_alpha = 0.5,
+    .width = c(0.001, 0.95),
+    point_interval = "mean_hdi"
+  ) +
+  geom_point(
+    data = observed_species_disp,
+    aes(full_species, disp), pch = 21, fill = "white", size = 2
+  ) +
+  scale_fill_manual(values = species_palette) +
+  scale_x_discrete("", guide = guide_axis(n.dodge = 2)) +
+  scale_y_continuous("dispersal rate") +
+  annotate("text", x=1, y=0.3, label= "a") +
+  annotate("text", x=2, y=0.3, label= "a") +
+  annotate("text", x=3, y=0.3, label= "a") +
+  annotate("text", x=4, y=0.3, label= "a") +
+  annotate("text", x=5, y=0.4, label= "a")
+
+plot_dispersal
+
+
+plot_development <- ggplot() +
+  stat_pointinterval(
+    data = model1_data,
+    aes(full_species, development_time, group = line),
+    col = "grey70",
+    position = position_jitter(seed = 404, width = 0.4),
+    .width = 0.95
+  ) +
+  stat_eye(
+    data = fixed_data,
+    aes(full_species, development_time, fill = species),
+    slab_alpha = 0.5,
+    .width = c(0.001, 0.95),
+    point_interval = "mean_hdi"
+  ) +
+  geom_point(
+    data = observed_species_dev,
+    aes(full_species, time), pch = 21, fill = "white", size = 2
+  ) +
+  scale_fill_manual(values = species_palette) +
+  scale_x_discrete("", guide = guide_axis(n.dodge = 2)) +
+  scale_y_continuous("development time (days)") +
+  annotate("text", x=1, y=14.9, label= "a") +
+  annotate("text", x=2, y=13, label= "b") +
+  annotate("text", x=3, y=14, label= "ab") +
+  annotate("text", x=4, y=14, label= "ac") +
+  annotate("text", x=5, y=13.5, label= "bc")
+
+plot_development
+
+plot_fecundity <- ggplot() +
+  stat_pointinterval(
+    data = model1_data,
+    aes(full_species, mu, group = line),
+    col = "grey70",
+    position = position_jitter(seed = 404, width = 0.4),
+    .width = 0.95
+  ) +
+  stat_eye(
+    data = fixed_data,
+    aes(full_species, mu, fill = species),
+    slab_alpha = 0.5,
+    .width = c(0.001, 0.95),
+    point_interval = "mean_hdi"
+  ) +
+  geom_point(
+    data = observed_species_mu,
+    aes(full_species, mu), pch = 21, fill = "white", size = 2
+  ) +
+  scale_fill_manual(values = species_palette) +
+  scale_x_discrete("", guide = guide_axis(n.dodge = 2)) +
+  scale_y_continuous("(fecundity|no retention) \n (nb eggs parasitized/2 days)")+
+  annotate("text", x=1, y=35, label= "a") +
+  annotate("text", x=2, y=60, label= "b") +
+  annotate("text", x=3, y=40, label= "ac") +
+  annotate("text", x=4, y=40, label= "ac") +
+  annotate("text", x=5, y=50, label= "bc")
+
+plot_fecundity
+
+plot_zi <- ggplot() +
+  stat_pointinterval(
+    data = model1_data,
+    aes(full_species, zi, group = line),
+    col = "grey70",
+    position = position_jitter(seed = 404, width = 0.4),
+    .width = 0.95
+  ) +
+  stat_eye(
+    data = fixed_data,
+    aes(full_species, zi, fill = species),
+    slab_alpha = 0.5,
+    .width = c(0.001, 0.95),
+    point_interval = "mean_hdi"
+  ) +
+  geom_point(
+    data = observed_species_zi,
+    aes(full_species, zi), pch = 21, fill = "white", size = 2
+  ) +
+  scale_fill_manual(values = species_palette) +
+  scale_x_discrete("", guide = guide_axis(n.dodge = 2)) +
+  scale_y_continuous("retention probability") +
+  annotate("text", x = 1, y = 0.65, label = "a") +
+  annotate("text", x = 2, y = 0.75, label = "b") +
+  annotate("text", x = 3, y = 0.65, label = "ab") +
+  annotate("text", x = 4, y = 0.75, label = "ab") +
+  annotate("text", x = 5, y = 0.85, label = "b")
+
+plot_zi
+
+(plot_dispersal / plot_development / plot_fecundity / plot_zi) &
+  theme_bw() &
+  theme(legend.position = "none", axis.text.x = element_markdown()) &
+  plot_annotation(tag_levels = "A")
+```
+
+### Figure 3
+
+WE want to see the correlation between fecundity and development time (Figure 3)
+
+```{r figure POL}
+# covariance inter and intra species; only on the mu component of fecundity = fecundity of individuals without retention
+
+# first create a table for species highest density interval (fixed effect only)
+figure_POL_mu <- fixed_data |>
+  group_by(species) |>
+  mean_hdi(mu) |> # 95 highest density interval (.width = 0.95)
+  rename(mu.lower = .lower) |>
+  rename(mu.upper = .upper)
+
+figure_POL_development <- fixed_data |>
+  group_by(species) |>
+  mean_hdi(development_time) |> # 95 highest density interval (.width = 0.95)
+  rename(development.lower = .lower) |>
+  rename(development.upper = .upper)
+
+figure_POL_species <- figure_POL_development |>
+  left_join(figure_POL_mu) |>
+  mutate(full_species = paste0("*T. ", species, "*"))
+
+
+# then a table for lines highest density intervals
+figure_POL_mu <- model1_data |>
+  group_by(species, line) |>
+  mean_hdi(mu) |>
+  rename(mu.lower = .lower) |>
+  rename(mu.upper = .upper)
+
+figure_POL_development <- model1_data |>
+  group_by(species, line) |>
+  mean_hdi(development_time) |>
+  rename(development.lower = .lower) |>
+  rename(development.upper = .upper)
+
+figure_POL_line <- figure_POL_development |>
+  left_join(figure_POL_mu)
+
+# the plot
+ggplot(data = figure_POL_line) +
+  geom_linerange(
+    aes(
+      y = development_time, x = mu,
+      ymin = development.lower, ymax = development.upper
+    ),
+    size = 0.5, alpha = 0.5, colour = "grey70"
+  ) +
+  geom_linerange(
+    aes(
+      y = development_time, x = mu,
+      xmin = mu.lower, xmax = mu.upper
+    ),
+    size = 0.5, alpha = 0.5, colour = "grey70"
+  ) +
+  geom_point(aes(y = development_time, x = mu), size = 0.5) +
+  geom_point(aes(y = development_time, x = mu), size = 0.5, colour = "grey70") +
+  geom_linerange(
+    data = figure_POL_species,
+    aes(
+      y = development_time, x = mu,
+      ymin = development.lower, ymax = development.upper,
+      col = full_species
+    ), size = 1.1
+  ) +
+  geom_linerange(
+    data = figure_POL_species,
+    aes(
+      y = development_time, x = mu,
+      xmin = mu.lower, xmax = mu.upper,
+      col = full_species
+    ), size = 1.1
+  ) +
+  geom_point(data = figure_POL_species, mapping = aes(
+    y = development_time, x = mu, fill = full_species,
+    pch = full_species
+  ), size = 4, colour = "black") +
+  xlab("(Fecundity|no retention) (nb eggs parasitized/2 days)") +
+  ylab("Development time (days)") +
+  labs(fill = "species", col = "species", shape = "species") +
+  scale_color_manual(values = species_palette) +
+  scale_fill_manual(values = species_palette) +
+  scale_shape_manual(values = 21:25) +
+  theme_bw() +
+  theme(
+    axis.text = element_text(size = 12),
+    axis.title = element_text(size = 14),
+    legend.text = element_markdown()
+  )
+```
+
+### Table 2: info for correlations tables
+
+Now we look at line level correlations between our four traits, with and without species effect (Table 2)
+
+```{r correlations}
+
+# create summaries for the two models, with HDI credible intervals rather than the default quantile intervals of summary()
+
+summary_model1 <- model1 |>
+  as_draws_df() |>
+  select(starts_with(c("b_", "sd_", "cor_", "sigma"))) |> # MAXIME: on peut se contenter de "cor" ici probablement (et en dessous) je supprime pas de suite au cas ou on a une idee qui utilise les autres coefs
+  pivot_longer(everything()) |>
+  group_by(name) |>
+  mean_hdi()
+
+summary_model1 |>
+  print(n = Inf)
+
+summary_model2 <- model2 |>
+  as_draws_df() |>
+  select(starts_with(c("b_", "sd_", "cor_", "sigma"))) |>
+  pivot_longer(everything()) |>
+  group_by(name) |>
+  mean_hdi()
+
+summary_model2 |>
+  print(n = Inf)
+
+# model 1: correlations partitioned into among-species and within species components,
+# so the random effect correlation table only reflect within species correlation
+
+table_cor_LINE <- summary_model1 |>
+  mutate(value = paste(round(value, 2), " [", round(.lower, 2), "; ", round(.upper, 2), "]", sep = "")) |>
+  filter(str_detect(name, "cor_line") == TRUE) |>
+  mutate(
+    response1 = case_when(
+      str_detect(name, "cor_line__lowbound") ~ "lowbound",
+      str_detect(name, "cor_line__zi") ~ "retention_probability",
+      str_detect(name, "cor_line__nbegg") ~ "fecundity_noretention",
+      str_detect(name, "cor_line__dispersal") ~ "dispersal_rate"
+    ),
+    response2 = case_when(
+      str_detect(name, "lowbound_Intercept$") ~ "lowbound",
+      str_detect(name, "zi_nbegg_Intercept$") ~ "retention_probability",
+      str_detect(name, "nbegg_Intercept$") ~ "fecundity_noretention",
+      str_detect(name, "dispersal_Intercept$") ~ "dispersal_rate"
+    ),
+  ) |>
+  select(response1, response2, value)
+
+## first model table
+table_cor_LINE
+
+
+
+# same but not partitioned into among-species and within species components = model 2
+
+table_cor_fullLINE <- summary_model2 |>
+  mutate(value = paste(round(value, 2), " [", round(.lower, 2), "; ", round(.upper, 2), "]", sep = "")) |>
+  filter(str_detect(name, "cor_line") == TRUE) |>
+  mutate(
+    response1 = case_when(
+      str_detect(name, "cor_line__lowbound") ~ "development_time",
+      str_detect(name, "cor_line__zi") ~ "retention_probability",
+      str_detect(name, "cor_line__nbegg") ~ "fecundity_noretention",
+      str_detect(name, "cor_line__dispersal") ~ "dispersal_rate"
+    ),
+    response2 = case_when(
+      str_detect(name, "lowbound_Intercept$") ~ "development_time",
+      str_detect(name, "zi_nbegg_Intercept$") ~ "retention_probability",
+      str_detect(name, "nbegg_Intercept$") ~ "fecundity_noretention",
+      str_detect(name, "dispersal_Intercept$") ~ "dispersal_rate"
+    ),
+  ) |>
+  select(response1, response2, value)
+
+
+## second model table
+table_cor_fullLINE
+```
+
+### BONUS JUST TO CHECK (you can delete later maybe if we don't use)
+
+A version of figure 3, but for ZI and mu instead
+
+```{r figure POL 2}
+# covariance inter and intra species; only on the mu component of fecundity = fecundity of individuals without retention
+
+# first create a table for species highest density interval (fixed effect only)
+figure_POL_zi <- fixed_data |>
+  group_by(species) |>
+  mean_hdi(zi) |> # 95 highest density interval (.width = 0.95)
+  rename(zi.lower = .lower) |>
+  rename(zi.upper = .upper)
+
+figure_POL_mu <- fixed_data |>
+  group_by(species) |>
+  mean_hdi(mu) |> # 95 highest density interval (.width = 0.95)
+  rename(mu.lower = .lower) |>
+  rename(mu.upper = .upper)
+
+figure_POL_species_bonus <- figure_POL_zi |>
+  left_join(figure_POL_mu) |>
+  mutate(full_species = paste0("*T. ", species, "*"))
+
+
+# then a table for lines highest density intervals
+figure_POL_mu <- model1_data |>
+  group_by(species, line) |>
+  mean_hdi(mu) |>
+  rename(mu.lower = .lower) |>
+  rename(mu.upper = .upper)
+
+figure_POL_zi <- model1_data |>
+  group_by(species, line) |>
+  mean_hdi(zi) |>
+  rename(zi.lower = .lower) |>
+  rename(zi.upper = .upper)
+
+figure_POL_line_bonus <- figure_POL_zi |>
+  left_join(figure_POL_mu)
+
+# the plot
+ggplot(data = figure_POL_line_bonus) +
+  geom_linerange(
+    aes(
+      y = zi, x = mu,
+      ymin = zi.lower, ymax = zi.upper
+    ),
+    size = 0.5, alpha = 0.5, colour = "grey70"
+  ) +
+  geom_linerange(
+    aes(
+      y = zi, x = mu,
+      xmin = mu.lower, xmax = mu.upper
+    ),
+    size = 0.5, alpha = 0.5, colour = "grey70"
+  ) +
+  geom_point(aes(y = zi, x = mu), size = 0.5) +
+  geom_point(aes(y = zi, x = mu), size = 0.5, colour = "grey70") +
+  geom_linerange(
+    data = figure_POL_species_bonus,
+    aes(
+      y = zi, x = mu,
+      ymin = zi.lower, ymax = zi.upper,
+      col = full_species
+    ), size = 1.1
+  ) +
+  geom_linerange(
+    data = figure_POL_species_bonus,
+    aes(
+      y = zi, x = mu,
+      xmin = mu.lower, xmax = mu.upper,
+      col = full_species
+    ), size = 1.1
+  ) +
+  geom_point(data = figure_POL_species_bonus, mapping = aes(
+    y = zi, x = mu, fill = full_species,
+    pch = full_species
+  ), size = 4, colour = "black") +
+  xlab("(Fecundity|no retention) (nb eggs parasitized/2 days)") +
+  ylab("retention rate") +
+  labs(fill = "species", col = "species", shape = "species") +
+  scale_color_manual(values = species_palette) +
+  scale_fill_manual(values = species_palette) +
+  scale_shape_manual(values = 21:25) +
+  theme_bw() +
+  theme(
+    axis.text = element_text(size = 12),
+    axis.title = element_text(size = 14),
+    legend.text = element_markdown()
+  )
+```
+
+## BONUS 2 suitable for supplementary?
+
+```{r plot trait values line}
+## plot posterior traits values per species (fixed effects only), with posterior lines values as boxplot
+model1_data$full_species <- paste0("*T. ", model1_data$species, "*")
+
+## observed means for plotting (approximated for development and fecundity variables)
+observed_species_disp <- data_Trichogramma |>
+  filter(valid_dispersal == 1) |>
+  group_by(species,line) |>
+  summarise(disp = mean(dispersal)) |>
+  mutate(full_species = paste0("*T. ", species, "*"))
+
+observed_species_dev <- data_Trichogramma |>
+  filter(valid_development == 1) |>
+  group_by(species,line) |>
+  summarise(time = mean((upbound + lowbound) / 2)) |>
+  mutate(full_species = paste0("*T. ", species, "*"))
+
+observed_species_zi <- data_Trichogramma |>
+  filter(valid_fecundity == 1) |>
+  group_by(species,line) |>
+  summarise(zi = mean(nb_egg == 0)) |>
+  mutate(full_species = paste0("*T. ", species, "*"))
+
+observed_species_mu <- data_Trichogramma |>
+  filter(valid_development == 1 & nb_egg > 0) |>
+  group_by(species,line) |>
+  summarise(mu = mean(nb_egg)) |>
+  mutate(full_species = paste0("*T. ", species, "*"))
+
+
+
+plot_dispersal <- ggplot() +
+  stat_pointinterval(
+    data = model1_data,
+    aes(line, dispersal_rate, col = full_species),
+    .width = 0.95
+  ) +
+  geom_point(
+    data = observed_species_disp,
+    aes(line, disp), pch = 21, fill = "white", size = 2
+  ) +
+  scale_color_manual(values = species_palette) +
+  scale_x_discrete("", guide = guide_axis(n.dodge = 2)) +
+  scale_y_continuous("dispersal rate")+ 
+  facet_grid(cols=vars(full_species),scale = "free_x")
+
+plot_dispersal
+
+
+plot_development <- ggplot() +
+  stat_pointinterval(
+    data = model1_data,
+    aes(line, development_time, col=full_species),
+    .width = 0.95
+  ) +
+  geom_point(
+    data = observed_species_dev,
+    aes(line, time), pch = 21, fill = "white", size = 2
+  ) +
+  scale_color_manual(values = species_palette) +
+  scale_x_discrete("", guide = guide_axis(n.dodge = 2)) +
+  scale_y_continuous("development time (days)")+ 
+  facet_grid(cols=vars(full_species),scale = "free_x")
+
+plot_development
+
+plot_fecundity <- ggplot() +
+  stat_pointinterval(
+    data = model1_data,
+    aes(line, mu, col=full_species),
+    .width = 0.95
+  ) +
+  geom_point(
+    data = observed_species_mu,
+    aes(line, mu), pch = 21, fill = "white", size = 2
+  ) +
+  scale_color_manual(values = species_palette) +
+  scale_x_discrete("", guide = guide_axis(n.dodge = 2)) +
+  scale_y_continuous("(fecundity|no retention) \n (nb eggs parasitized/2 days)")+ 
+  facet_grid(cols=vars(full_species),scale = "free_x")
+
+plot_fecundity
+
+plot_zi <- ggplot() +
+  stat_pointinterval(
+    data = model1_data,
+    aes(line, zi, col=full_species),
+    .width = 0.95
+  ) +
+  geom_point(
+    data = observed_species_zi,
+    aes(line, zi), pch = 21, fill = "white", size = 2
+  ) +
+  scale_color_manual(values = species_palette) +
+  scale_x_discrete("", guide = guide_axis(n.dodge = 2)) +
+  scale_y_continuous("retention rate")+ 
+  facet_grid(cols=vars(full_species),scale = "free_x")
+
+plot_zi
+
+(plot_dispersal / plot_development / plot_fecundity / plot_zi) &
+  theme_bw() &
+  theme(legend.position = "none", strip.text.x = element_textbox()) &
+  plot_annotation(tag_levels = "A")
+```
