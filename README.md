@@ -6,4 +6,4 @@ This repo contains data and code needed to perform the analyses and figures in: 
 
 The code relies on the `here` package to ensure relative file paths just work, independently of the computer.
 
-If you run the script for the first time, time-consuming outputs like models will be saved in the R_output folder so you don't have to re-run them everytime.
+If you run the script for the first time, time-consuming outputs like models will be saved in the `R_output` folder so you don't have to re-run them everytime.
