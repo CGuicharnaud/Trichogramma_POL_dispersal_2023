@@ -514,6 +514,14 @@ print(species_compare, n = Inf)
 species_palette <- c("#E69F00", "#56B4E9", "#009E73", "#F0E442", "#CC79A7")
 # colour palette for species
 
+position_lines <- c(0.8,0.9,1.1,1.2,1.8,1.85,1.9,1.95,2.05,2.1,2.15,2.2,2.25,2.85,2.9,2.95,3.05,3.1,3.15,3.2,3.9,4.1,4.2,4.9,4.95,5.05,5.1,5.15)
+# plot position for lines' IC
+
+model1_data$line = factor(model1_data$line, levels = c("ISA11967","ISA11969","ISA5544","ISA6646","F3-2","F3-9","F5-11","F5-12","F5-8","F6-4","I2-16","I6-5","PR002","BIO-XA","BIO-XE","BIO-XK","H-03","HY-05","N-05","Q-05","81a","ISA11235","ISA11367","BL110","CRV065","FPV025","FPV034-A","PR007"))
+
+
+# sorting lines in order of the graphical representation
+
 ## plot posterior traits values per species (fixed effects only), with posterior lines values as boxplot
 model1_data$full_species <- paste0("*T. ", model1_data$species, "*")
 fixed_data$full_species <- paste0("*T. ", fixed_data$species, "*")
@@ -550,7 +558,8 @@ plot_dispersal <- ggplot() +
     data = model1_data,
     aes(full_species, dispersal_rate, group = line),
     col = "grey70",
-    position = position_jitter(seed = 404, width = 0.4),
+#   position = position_dodge(seed = 404, width = 0.8),
+    x = position_lines,
     .width = 0.95
   ) +
   stat_eye(
@@ -563,7 +572,7 @@ plot_dispersal <- ggplot() +
   geom_point(
     data = observed_species_disp,
     aes(full_species, disp), pch = 21, fill = "white", size = 2
-  ) +
+  )  +
   scale_fill_manual(values = species_palette) +
   scale_x_discrete("", guide = guide_axis(n.dodge = 2)) +
   scale_y_continuous("dispersal rate") +
@@ -571,7 +580,9 @@ plot_dispersal <- ggplot() +
   annotate("text", x=2, y=0.3, label= "a") +
   annotate("text", x=3, y=0.3, label= "a") +
   annotate("text", x=4, y=0.3, label= "a") +
-  annotate("text", x=5, y=0.4, label= "a")
+  annotate("text", x=5, y=0.4, label= "a") +
+  coord_cartesian(xlim = c(1, 5))
+
 
 plot_dispersal
 
@@ -581,7 +592,8 @@ plot_development <- ggplot() +
     data = model1_data,
     aes(full_species, development_time, group = line),
     col = "grey70",
-    position = position_jitter(seed = 404, width = 0.4),
+    x = position_lines,
+#    position = position_jitter(seed = 404, width = 0.4),
     .width = 0.95
   ) +
   stat_eye(
@@ -602,7 +614,8 @@ plot_development <- ggplot() +
   annotate("text", x=2, y=13, label= "b") +
   annotate("text", x=3, y=14, label= "ab") +
   annotate("text", x=4, y=14, label= "ac") +
-  annotate("text", x=5, y=13.5, label= "bc")
+  annotate("text", x=5, y=13.5, label= "bc") +
+  coord_cartesian(xlim = c(1, 5))
 
 plot_development
 
@@ -611,7 +624,8 @@ plot_fecundity <- ggplot() +
     data = model1_data,
     aes(full_species, mu, group = line),
     col = "grey70",
-    position = position_jitter(seed = 404, width = 0.4),
+    x = position_lines,
+#    position = position_jitter(seed = 404, width = 0.4),
     .width = 0.95
   ) +
   stat_eye(
@@ -632,7 +646,8 @@ plot_fecundity <- ggplot() +
   annotate("text", x=2, y=60, label= "b") +
   annotate("text", x=3, y=40, label= "ac") +
   annotate("text", x=4, y=40, label= "ac") +
-  annotate("text", x=5, y=50, label= "bc")
+  annotate("text", x=5, y=50, label= "bc") +
+  coord_cartesian(xlim = c(1, 5))
 
 plot_fecundity
 
@@ -641,7 +656,8 @@ plot_zi <- ggplot() +
     data = model1_data,
     aes(full_species, zi, group = line),
     col = "grey70",
-    position = position_jitter(seed = 404, width = 0.4),
+    x = position_lines,
+#    position = position_jitter(seed = 404, width = 0.4),
     .width = 0.95
   ) +
   stat_eye(
@@ -662,14 +678,18 @@ plot_zi <- ggplot() +
   annotate("text", x = 2, y = 0.75, label = "b") +
   annotate("text", x = 3, y = 0.65, label = "ab") +
   annotate("text", x = 4, y = 0.75, label = "ab") +
-  annotate("text", x = 5, y = 0.85, label = "b")
+  annotate("text", x = 5, y = 0.85, label = "b") +
+  coord_cartesian(xlim = c(1, 5))
 
 plot_zi
 
-(plot_dispersal / plot_development / plot_fecundity / plot_zi) &
+fig2 <- (plot_dispersal / plot_development / plot_fecundity / plot_zi) &
   theme_bw() &
   theme(legend.position = "none", axis.text.x = element_markdown()) &
-  plot_annotation(tag_levels = "A")
+  plot_annotation(tag_levels = "A") 
+
+ggsave(here("figures", "fig2.pdf"), width = 326, height = 460, dpi = 600, units = "mm")
+ggsave(here("figures", "fig2.png"), width = 326, height = 460, dpi = 600, units = "mm")
 ```
 
 ### Figure 3
@@ -763,6 +783,9 @@ ggplot(data = figure_POL_line) +
     axis.title = element_text(size = 14),
     legend.text = element_markdown()
   )
+
+ggsave(here("figures", "fig3.pdf"), width = 305, height = 216, dpi = 600, units = "mm")
+ggsave(here("figures", "fig3.png"), width = 305, height = 216, dpi = 600, units = "mm")
 ```
 
 ### Table 2: info for correlations tables
