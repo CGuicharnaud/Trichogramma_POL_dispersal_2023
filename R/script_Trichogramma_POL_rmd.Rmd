@@ -8,7 +8,7 @@ output:
   html_notebook: default
   pdf_document: default
   editor_options:
-    chunk_output_type: console
+    chunk_output_type: inline
   chunk_output_type: inline
 ---
 
@@ -558,7 +558,6 @@ plot_dispersal <- ggplot() +
     data = model1_data,
     aes(full_species, dispersal_rate, group = line),
     col = "grey70",
-#   position = position_dodge(seed = 404, width = 0.8),
     x = position_lines,
     .width = 0.95
   ) +
@@ -593,7 +592,6 @@ plot_development <- ggplot() +
     aes(full_species, development_time, group = line),
     col = "grey70",
     x = position_lines,
-#    position = position_jitter(seed = 404, width = 0.4),
     .width = 0.95
   ) +
   stat_eye(
@@ -625,7 +623,6 @@ plot_fecundity <- ggplot() +
     aes(full_species, mu, group = line),
     col = "grey70",
     x = position_lines,
-#    position = position_jitter(seed = 404, width = 0.4),
     .width = 0.95
   ) +
   stat_eye(
@@ -657,7 +654,6 @@ plot_zi <- ggplot() +
     aes(full_species, zi, group = line),
     col = "grey70",
     x = position_lines,
-#    position = position_jitter(seed = 404, width = 0.4),
     .width = 0.95
   ) +
   stat_eye(
@@ -683,13 +679,16 @@ plot_zi <- ggplot() +
 
 plot_zi
 
+# fuse all plots in one
 fig2 <- (plot_dispersal / plot_development / plot_fecundity / plot_zi) &
   theme_bw() &
   theme(legend.position = "none", axis.text.x = element_markdown()) &
   plot_annotation(tag_levels = "A") 
 
-ggsave(here("figures", "fig2.pdf"), width = 326, height = 460, dpi = 600, units = "mm")
-ggsave(here("figures", "fig2.png"), width = 326, height = 460, dpi = 600, units = "mm")
+
+# save generated figures in 'figures' folder, at the right dimensions
+ggsave(here("figures", "fig2.pdf"), width = 163, height = 230, dpi = 1200, units = "mm")
+ggsave(here("figures", "fig2.png"), width = 163, height = 230, dpi = 1200, units = "mm")
 ```
 
 ### Figure 3
@@ -708,7 +707,7 @@ figure_POL_mu <- fixed_data |>
 
 figure_POL_development <- fixed_data |>
   group_by(species) |>
-  mean_hdi(development_time) |> # 95 highest density interval (.width = 0.95)
+  mean_hdi(development_time) |> 
   rename(development.lower = .lower) |>
   rename(development.upper = .upper)
 
@@ -784,8 +783,8 @@ ggplot(data = figure_POL_line) +
     legend.text = element_markdown()
   )
 
-ggsave(here("figures", "fig3.pdf"), width = 305, height = 216, dpi = 600, units = "mm")
-ggsave(here("figures", "fig3.png"), width = 305, height = 216, dpi = 600, units = "mm")
+ggsave(here("figures", "fig3.pdf"), width = 152, height = 108, dpi = 1200, units = "mm")
+ggsave(here("figures", "fig3.png"), width = 152, height = 108, dpi = 1200, units = "mm")
 ```
 
 ### Table 2: info for correlations tables
