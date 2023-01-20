@@ -112,7 +112,7 @@ mean(subset(data_Trichogramma$nb_egg, data_Trichogramma$valid_fecundity == 1))
 var(subset(data_Trichogramma$nb_egg, data_Trichogramma$valid_fecundity == 1))
 ```
 
-there is some hints of overdispersion and/or zero-inflation. These are not conclusive (it could be high between-line heterogeneity) but worth considering.
+There is some hints of overdispersion and/or zero-inflation. These are not conclusive (it could be high between-line heterogeneity) but worth considering.
 
 ### prior setting
 
@@ -121,25 +121,28 @@ To run our models, we need to specify priors for our three response variables. P
 ```{r median-values}
 
 # development time
-median(subset(data_Trichogramma$lowbound, data_Trichogramma$valid_development == 1)) # = 11
+median(subset(data_Trichogramma$lowbound, data_Trichogramma$valid_development == 1)) 
 
 # fecundity
-median(subset(data_Trichogramma$nb_egg, data_Trichogramma$valid_fecundity == 1)) # = 19
+median(subset(data_Trichogramma$nb_egg, data_Trichogramma$valid_fecundity == 1))
 ```
 
 ### Family choice for fecundity
 
 We tried a first univariate negative binomial model for fecundity:
 
-```{r fecundity-inflated, warning= FALSE, message= FALSE, results = 'hide'}
+```{r fecundity-univariate, warning= FALSE, message= FALSE, results = 'hide'}
 
+# family choice
 bf_fecundity_negbino <- bf(nb_egg | subset(valid_fecundity) ~ 0 + species + (1 | p | line), family = "negbinomial")
 
+# prior setting
 prior_fecundity_negbino <- c(
   set_prior("normal(0,1)", class = "sd"),
-  set_prior("normal(log(19),1)", class = "b") # the median info is used on the log scale because of the log link for the negbinomial model
+  set_prior("normal(log(19),1)", class = "b") # the median is on the log scale because of the log link for the negbinomial model
 )
 
+# univariate negative binomial model 
 mod_fecundity_negbino <- brm(
   bf_fecundity_negbino,
   data = data_Trichogramma,
@@ -154,34 +157,34 @@ There may be some divergences, but we'll let them pass for now, because:
 
 ```{r fecundity check}
 
-pp_check(mod_fecundity_negbino, ndraws = 150) # ok for range, but not for peak height
-pp_check(mod_fecundity_negbino, "ecdf_overlay", ndraws = 150) # ok for range, but not for peak height
+pp_check(mod_fecundity_negbino, ndraws = 150)
+pp_check(mod_fecundity_negbino, "ecdf_overlay", ndraws = 150)
 ```
 
-Posterior does not correctly fit observations, where two peaks are present, one representing an overabundance of 0. It is especially bad catching the correct number of zeroes. Therefore, a zero-inflated negative binomial function is used in multivariate models.
+Posterior does not correctly fit observations, where two peaks are present, one representing an overabundance of 0. While the range is correct, it is especially bad catching the correct number of zeroes. Therefore, a zero-inflated negative binomial function is used in multivariate models.
 
 ### Main models
 
 **Model 1**
 
-The first model take into account inter and intra specific line covariation:
+The first model incorporate species as a fixed effect, allowing us to observe inter- and intra- species line covariation:
 
 ```{r}
 # priors
 
 prior1 <- c(
-  # development prior
+  # development priors
   set_prior("normal(log(11),1)", class = "b", resp = "lowbound"),
   set_prior("normal(0,1)", class = "sd", resp = "lowbound"),
   set_prior("normal(0,1)", class = "sigma", resp = "lowbound"),
 
-  # fecundity prior
+  # fecundity priors
   set_prior("normal(log(19),1)", class = "b", resp = "nbegg"),
   set_prior("normal(0,1.5)", class = "b", dpar = "zi", resp = "nbegg"),
   set_prior("normal(0,1)", class = "sd", resp = "nbegg"),
   set_prior("normal(0,1)", class = "b", nlpar = "invshape", lb = 0, resp = "nbegg"),
 
-  # dispersal prior
+  # dispersal priors
   set_prior("normal(0,1.5)", class = "b", resp = "dispersal"),
   set_prior("normal(0,1)", class = "sd", resp = "dispersal"),
 
@@ -190,25 +193,32 @@ prior1 <- c(
 )
 ```
 
+Just like the univariate model, medians are on a log scale to compensate for log-link. Priors for retention probability (`zi` component) and fecundity without retention are all listed under `fecundity priors.`
+
 ```{r}
 # formulas
 
+# fecundity 
 bf_fecundity_0inflated1 <- bf(nb_egg | subset(valid_fecundity) ~ 0 + species + (1 | p | line), # fecundity without 0 inflation
-  zi ~ 0 + species + (1 | p | line), # zi: new variable for nbegg=0
-  nlf(shape ~ 1 / invshape), # nlf = specify non linear formula to brms
+  zi ~ 0 + species + (1 | p | line), # correspond to retention probability
+  nlf(shape ~ 1 / invshape),
   invshape ~ 1,
-  # use invshape so generic priors are easier to set (see https://github.com/stan-dev/stan/wiki/Prior-Choice-Recommendations, the case of negative binomial)
   family = "zero_inflated_negbinomial"(link_shape = "identity")
-) # fixing the link for shape to identity despite the use of a formula (which would otherwise make it default to log link) is important for correct prior setting
+)
 
+# development time
 bf_dvlpmt_cens1 <- bf(lowbound | cens(censore, upbound) + subset(valid_development) ~ 0 + species + (1 | p | line), family = "lognormal")
 
+# dispersal
 bf_dispersal1 <- bf(dispersal | subset(valid_dispersal) ~ 0 + species + (1 | p | line), family = "bernoulli")
 ```
 
-```{r multivariate model 1, warning= FALSE, message= FALSE, results = 'hide'}
+In the fecundity formula, we use invshape so generic priors are easier to set (see <https://github.com/stan-dev/stan/wiki/Prior-Choice-Recommendations,> the case of negative binomial, for more information), and fixing the link for shape to identity despite the use of a formula (which would otherwise make it default to log link), important for correct prior setting. Development time was interval censored because we do not know when, during the 48h allowed, females really reproduced.
 
-if (file.exists(here("R_output", "modeld1.Rdata"))) {
+```{r multivariate model 1, warning= FALSE, message= FALSE, results = 'hide'}
+# running model 1
+
+if (file.exists(here("R_output", "model1.Rdata"))) {
   load(here("R_output", "model1.Rdata"))
 } else {
   model1 <- brm(
@@ -226,7 +236,7 @@ if (file.exists(here("R_output", "modeld1.Rdata"))) {
 
 **Model 2**
 
-To be able to more fully describe covariation patterns between lines, the second model removes species-level effects, so removes the partition that was made between within-species and among-species line level covariation
+To be able to more fully describe covariation patterns between lines, the second model removes species-level effects, so removes the partition that was made between within-species and among-species line level covariation. Otherwise, no other changes were made compared to the first model.
 
 ```{r}
 # priors
@@ -243,7 +253,6 @@ prior2 <- c(
   set_prior("normal(0,1)", class = "sd", resp = "nbegg"),
   set_prior("normal(0,1)", class = "b", nlpar = "invshape", lb = 0, resp = "nbegg"),
 
-
   # dispersal prior
   set_prior("normal(0,1.5)", class = "Intercept", resp = "dispersal"),
   set_prior("normal(0,1)", class = "sd", resp = "dispersal"),
@@ -252,6 +261,8 @@ prior2 <- c(
   set_prior("lkj(2)", class = "cor")
 )
 ```
+
+Removing species slightly changes formulas by removing `0 +` as it is no more necessary to specify that there is no reference species, resulting in a slight change in the prior class (from `class = b` to `class = intercept`).
 
 ```{r}
 # formula
@@ -269,7 +280,7 @@ bf_dispersal2 <- bf(dispersal | subset(valid_dispersal) ~ (1 | p | line), family
 ```
 
 ```{r multivariate model 2, warning= FALSE, message= FALSE, results = 'hide'}
-
+# running model 2
 
 if (file.exists(here("R_output", "model2.Rdata"))) {
   load(here("R_output", "model2.Rdata"))
@@ -365,34 +376,38 @@ ppc_intervals_data(source$lowbound, yrep = yrep2) |>
 We create posterior datasets for the 2 models
 
 ```{r post-model dataset, warning= FALSE, message= FALSE}
+
 # Create posterior dataset for the first model
 
 unique_lines <- data_Trichogramma |>
   select(species, line) |>
   distinct() |>
-  mutate(valid_development = 1, valid_dispersal = 1, valid_fecundity = 1) # need all subset columns
+  mutate(valid_development = 1, valid_dispersal = 1, valid_fecundity = 1)
 
+# development dataset
 modcens1_data_dvlp <- unique_lines |>
   add_epred_draws(model1, resp = "lowbound") |>
   rename(development_time = .epred)
 
-
+# dispersal
 modcens1_data_disp <- unique_lines |>
   add_epred_draws(model1, resp = "dispersal") |>
   rename(dispersal_rate = .epred)
 
-
+# fecundity
 modcens1_data_fec <- unique_lines |>
   add_epred_draws(model1, resp = "nbegg", dpar = c("zi", "mu")) |>
   rename(fecundity = .epred)
+# mu ccorrespond to the fecundity of individuals without retention
 
-
+# fuse all response posterior datasets into one unique dataset
 model1_data <- modcens1_data_dvlp |>
   left_join(modcens1_data_disp) |>
   left_join(modcens1_data_fec) |>
   subset(select = -c(.iteration, .chain, .row, valid_development, valid_dispersal, valid_fecundity))
 
 
+# the same is done for model 2
 modcens2_data_dvlp <- unique_lines |>
   add_epred_draws(model2, resp = "lowbound") |>
   rename(development_time = .epred)
@@ -407,38 +422,33 @@ modcens2_data_fec <- unique_lines |>
   add_epred_draws(model2, resp = "nbegg", dpar = c("zi", "mu")) |>
   rename(fecundity = .epred)
 
-
+# fusing all posteriors into one dataset for model 2
 model2_data <- modcens2_data_dvlp |>
   left_join(modcens2_data_disp) |>
   left_join(modcens2_data_fec) |>
   subset(select = -c(.iteration, .chain, .row, valid_development, valid_dispersal, valid_fecundity))
 ```
 
-Here, only fixed effect posterior are kept to have species-level trait values
+To later study only species-level trait values, we also extracted only fixed effect posterior values. This step is only possible on the first model, as it is the only one accounting for species.
 
 ```{r posterior fixed effects only}
 
 unique_species <- data_Trichogramma |>
   select(species) |>
   distinct() |>
-  mutate(valid_development = 1, valid_dispersal = 1, valid_fecundity = 1) # need all subset columns
-
-# Create posterior dataset for the first model
+  mutate(valid_development = 1, valid_dispersal = 1, valid_fecundity = 1) 
 
 fixed_data_dvlp <- unique_species |>
-  mutate(valid_development = 1, valid_dispersal = 1, valid_fecundity = 1) |> # need all subset columns
   add_epred_draws(model1, resp = "lowbound", re_formula = NA) |>
   rename(development_time = .epred)
 
 
 fixed_data_disp <- unique_species |>
-  mutate(valid_dispersal = 1, valid_fecundity = 1, valid_development = 1) |>
   add_epred_draws(model1, resp = "dispersal", re_formula = NA) |>
   rename(dispersal_rate = .epred)
 
 
 fixed_data_fec <- unique_species |>
-  mutate(valid_fecundity = 1, valid_development = 1, valid_dispersal = 1) |>
   add_epred_draws(model1, resp = "nbegg", dpar = c("zi", "mu"), re_formula = NA) |>
   rename(fecundity = .epred)
 
@@ -451,8 +461,9 @@ fixed_data <- fixed_data_dvlp |>
 
 ### Table 1: species level (fixed effects) predictions, summary table
 
+This code is used to get 95% highest density intervals for species level trait values. Decimal numbers are rounded to two decimal places.
+
 ```{r traits values}
-## fixed trait table, fixed effect only (table 1)
 
 table_trait_values_development <- fixed_data |>
   group_by(species) |>
@@ -486,7 +497,7 @@ table1 <- left_join(table_trait_values_development, table_trait_values_fecundity
 table1
 ```
 
-### pairwise differences between species (for "significantly different" markers on table 1)
+### pairwise differences between species (for "significantly different" markers on figure 2)
 
 ```{r compare test, eval = FALSE}
 
@@ -511,18 +522,18 @@ print(species_compare, n = Inf)
 ### Figure 2: species and line level posterior per trait
 
 ```{r plot trait values}
+# colourblind-friendly palette for species
 species_palette <- c("#E69F00", "#56B4E9", "#009E73", "#F0E442", "#CC79A7")
-# colour palette for species
 
+# plot position for lines posteriors, to make sure that no lines are hidden by species posterior
 position_lines <- c(0.8,0.9,1.1,1.2,1.8,1.85,1.9,1.95,2.05,2.1,2.15,2.2,2.25,2.85,2.9,2.95,3.05,3.1,3.15,3.2,3.9,4.1,4.2,4.9,4.95,5.05,5.1,5.15)
-# plot position for lines' IC
-
-model1_data$line = factor(model1_data$line, levels = c("ISA11967","ISA11969","ISA5544","ISA6646","F3-2","F3-9","F5-11","F5-12","F5-8","F6-4","I2-16","I6-5","PR002","BIO-XA","BIO-XE","BIO-XK","H-03","HY-05","N-05","Q-05","81a","ISA11235","ISA11367","BL110","CRV065","FPV025","FPV034-A","PR007"))
-
 
 # sorting lines in order of the graphical representation
+model1_data <- model1_data |>
+  arrange(species) |>
+  group_by(species) |>
+  arrange (line, .by_group = TRUE)
 
-## plot posterior traits values per species (fixed effects only), with posterior lines values as boxplot
 model1_data$full_species <- paste0("*T. ", model1_data$species, "*")
 fixed_data$full_species <- paste0("*T. ", fixed_data$species, "*")
 
@@ -552,7 +563,7 @@ observed_species_mu <- data_Trichogramma |>
   mutate(full_species = paste0("*T. ", species, "*"))
 
 
-
+# creating one plot for each trait, using the ordered dataset from the first model posterior values
 plot_dispersal <- ggplot() +
   stat_pointinterval(
     data = model1_data,
@@ -685,18 +696,17 @@ fig2 <- (plot_dispersal / plot_development / plot_fecundity / plot_zi) &
   theme(legend.position = "none", axis.text.x = element_markdown()) &
   plot_annotation(tag_levels = "A") 
 
+fig2
 
-# save generated figures in 'figures' folder, at the right dimensions
-ggsave(here("figures", "fig2.pdf"), width = 163, height = 230, dpi = 1200, units = "mm")
-ggsave(here("figures", "fig2.png"), width = 163, height = 230, dpi = 1200, units = "mm")
+# you can save generated figures in 'figures' folder, at the right dimensions using the commented code below:
+
+#ggsave(here("figures", "fig2.pdf"), width = 163, height = 230, dpi = 1200, units = "mm")
+#ggsave(here("figures", "fig2.png"), width = 163, height = 230, dpi = 1200, units = "mm")
 ```
 
-### Figure 3
-
-WE want to see the correlation between fecundity and development time (Figure 3)
+### Figure 3: correlation between development time and fecundity without retention
 
 ```{r figure POL}
-# covariance inter and intra species; only on the mu component of fecundity = fecundity of individuals without retention
 
 # first create a table for species highest density interval (fixed effect only)
 figure_POL_mu <- fixed_data |>
@@ -783,13 +793,15 @@ ggplot(data = figure_POL_line) +
     legend.text = element_markdown()
   )
 
-ggsave(here("figures", "fig3.pdf"), width = 152, height = 108, dpi = 1200, units = "mm")
-ggsave(here("figures", "fig3.png"), width = 152, height = 108, dpi = 1200, units = "mm")
+# you can save generated figures in 'figures' folder, at the right dimensions using the commented code below:
+
+#ggsave(here("figures", "fig3.pdf"), width = 152, height = 108, dpi = 1200, units = "mm")
+#ggsave(here("figures", "fig3.png"), width = 152, height = 108, dpi = 1200, units = "mm")
 ```
 
-### Table 2: info for correlations tables
+### Table 1: info for correlations tables
 
-Now we look at line level correlations between our four traits, with and without species effect (Table 2)
+Now we look at line level correlations between our four traits, with and without species effect (Table 1)
 
 ```{r correlations}
 
@@ -797,7 +809,7 @@ Now we look at line level correlations between our four traits, with and without
 
 summary_model1 <- model1 |>
   as_draws_df() |>
-  select(starts_with(c("b_", "sd_", "cor_", "sigma"))) |> # MAXIME: on peut se contenter de "cor" ici probablement (et en dessous) je supprime pas de suite au cas ou on a une idee qui utilise les autres coefs
+  select(starts_with("cor_")) |> 
   pivot_longer(everything()) |>
   group_by(name) |>
   mean_hdi()
@@ -807,7 +819,7 @@ summary_model1 |>
 
 summary_model2 <- model2 |>
   as_draws_df() |>
-  select(starts_with(c("b_", "sd_", "cor_", "sigma"))) |>
+  select(starts_with("cor_")) |>
   pivot_longer(everything()) |>
   group_by(name) |>
   mean_hdi()
@@ -815,8 +827,7 @@ summary_model2 <- model2 |>
 summary_model2 |>
   print(n = Inf)
 
-# model 1: correlations partitioned into among-species and within species components,
-# so the random effect correlation table only reflect within species correlation
+# model 1: correlations partitioned into among-species and within species components, so the random effect correlation table only reflect within species correlation
 
 table_cor_LINE <- summary_model1 |>
   mutate(value = paste(round(value, 2), " [", round(.lower, 2), "; ", round(.upper, 2), "]", sep = "")) |>
@@ -837,12 +848,12 @@ table_cor_LINE <- summary_model1 |>
   ) |>
   select(response1, response2, value)
 
-## first model table
+# first model table
 table_cor_LINE
 
 
 
-# same but not partitioned into among-species and within species components = model 2
+# model 2: covariation is not partitioned into among-species and within species components
 
 table_cor_fullLINE <- summary_model2 |>
   mutate(value = paste(round(value, 2), " [", round(.lower, 2), "; ", round(.upper, 2), "]", sep = "")) |>
