@@ -1,6 +1,6 @@
 ---
 title: "Analysis code for 'Life history traits, pace-of-life and dispersal among and within five species of *Trichogramma*: a comparative analysis'"
-author: "Chloé GUICHARNAUD, Géraldine Groussier, Erwan Beranger, Laurent Lamy, Maxime Dahirel, Elodie Vercken"
+author: "Chloé Guicharnaud, Géraldine Groussier, Erwan Beranger, Laurent Lamy, Elodie Vercken, Maxime Dahirel"
 date: 
 output:
   html_document:
@@ -700,8 +700,8 @@ fig2
 
 # you can save generated figures in 'figures' folder, at the right dimensions using the commented code below:
 
-#ggsave(here("figures", "fig2.pdf"), width = 163, height = 230, dpi = 1200, units = "mm")
-#ggsave(here("figures", "fig2.png"), width = 163, height = 230, dpi = 1200, units = "mm")
+# ggsave(here("figures", "fig2.pdf"), width = 163, height = 230, dpi = 1200, units = "mm")
+# ggsave(here("figures", "fig2.png"), width = 163, height = 230, dpi = 1200, units = "mm")
 ```
 
 ### Figure 3: correlation between development time and fecundity without retention
@@ -795,8 +795,8 @@ ggplot(data = figure_POL_line) +
 
 # you can save generated figures in 'figures' folder, at the right dimensions using the commented code below:
 
-#ggsave(here("figures", "fig3.pdf"), width = 152, height = 108, dpi = 1200, units = "mm")
-#ggsave(here("figures", "fig3.png"), width = 152, height = 108, dpi = 1200, units = "mm")
+# ggsave(here("figures", "fig3.pdf"), width = 152, height = 108, dpi = 1200, units = "mm")
+# ggsave(here("figures", "fig3.png"), width = 152, height = 108, dpi = 1200, units = "mm")
 ```
 
 ### Table 1: info for correlations tables
@@ -877,205 +877,4 @@ table_cor_fullLINE <- summary_model2 |>
 
 ## second model table
 table_cor_fullLINE
-```
-
-### BONUS JUST TO CHECK (you can delete later maybe if we don't use)
-
-A version of figure 3, but for ZI and mu instead
-
-```{r figure POL 2}
-# covariance inter and intra species; only on the mu component of fecundity = fecundity of individuals without retention
-
-# first create a table for species highest density interval (fixed effect only)
-figure_POL_zi <- fixed_data |>
-  group_by(species) |>
-  mean_hdi(zi) |> # 95 highest density interval (.width = 0.95)
-  rename(zi.lower = .lower) |>
-  rename(zi.upper = .upper)
-
-figure_POL_mu <- fixed_data |>
-  group_by(species) |>
-  mean_hdi(mu) |> # 95 highest density interval (.width = 0.95)
-  rename(mu.lower = .lower) |>
-  rename(mu.upper = .upper)
-
-figure_POL_species_bonus <- figure_POL_zi |>
-  left_join(figure_POL_mu) |>
-  mutate(full_species = paste0("*T. ", species, "*"))
-
-
-# then a table for lines highest density intervals
-figure_POL_mu <- model1_data |>
-  group_by(species, line) |>
-  mean_hdi(mu) |>
-  rename(mu.lower = .lower) |>
-  rename(mu.upper = .upper)
-
-figure_POL_zi <- model1_data |>
-  group_by(species, line) |>
-  mean_hdi(zi) |>
-  rename(zi.lower = .lower) |>
-  rename(zi.upper = .upper)
-
-figure_POL_line_bonus <- figure_POL_zi |>
-  left_join(figure_POL_mu)
-
-# the plot
-ggplot(data = figure_POL_line_bonus) +
-  geom_linerange(
-    aes(
-      y = zi, x = mu,
-      ymin = zi.lower, ymax = zi.upper
-    ),
-    size = 0.5, alpha = 0.5, colour = "grey70"
-  ) +
-  geom_linerange(
-    aes(
-      y = zi, x = mu,
-      xmin = mu.lower, xmax = mu.upper
-    ),
-    size = 0.5, alpha = 0.5, colour = "grey70"
-  ) +
-  geom_point(aes(y = zi, x = mu), size = 0.5) +
-  geom_point(aes(y = zi, x = mu), size = 0.5, colour = "grey70") +
-  geom_linerange(
-    data = figure_POL_species_bonus,
-    aes(
-      y = zi, x = mu,
-      ymin = zi.lower, ymax = zi.upper,
-      col = full_species
-    ), size = 1.1
-  ) +
-  geom_linerange(
-    data = figure_POL_species_bonus,
-    aes(
-      y = zi, x = mu,
-      xmin = mu.lower, xmax = mu.upper,
-      col = full_species
-    ), size = 1.1
-  ) +
-  geom_point(data = figure_POL_species_bonus, mapping = aes(
-    y = zi, x = mu, fill = full_species,
-    pch = full_species
-  ), size = 4, colour = "black") +
-  xlab("(Fecundity|no retention) (nb eggs parasitized/2 days)") +
-  ylab("retention rate") +
-  labs(fill = "species", col = "species", shape = "species") +
-  scale_color_manual(values = species_palette) +
-  scale_fill_manual(values = species_palette) +
-  scale_shape_manual(values = 21:25) +
-  theme_bw() +
-  theme(
-    axis.text = element_text(size = 12),
-    axis.title = element_text(size = 14),
-    legend.text = element_markdown()
-  )
-```
-
-## BONUS 2 suitable for supplementary?
-
-```{r plot trait values line}
-## plot posterior traits values per species (fixed effects only), with posterior lines values as boxplot
-model1_data$full_species <- paste0("*T. ", model1_data$species, "*")
-
-## observed means for plotting (approximated for development and fecundity variables)
-observed_species_disp <- data_Trichogramma |>
-  filter(valid_dispersal == 1) |>
-  group_by(species,line) |>
-  summarise(disp = mean(dispersal)) |>
-  mutate(full_species = paste0("*T. ", species, "*"))
-
-observed_species_dev <- data_Trichogramma |>
-  filter(valid_development == 1) |>
-  group_by(species,line) |>
-  summarise(time = mean((upbound + lowbound) / 2)) |>
-  mutate(full_species = paste0("*T. ", species, "*"))
-
-observed_species_zi <- data_Trichogramma |>
-  filter(valid_fecundity == 1) |>
-  group_by(species,line) |>
-  summarise(zi = mean(nb_egg == 0)) |>
-  mutate(full_species = paste0("*T. ", species, "*"))
-
-observed_species_mu <- data_Trichogramma |>
-  filter(valid_development == 1 & nb_egg > 0) |>
-  group_by(species,line) |>
-  summarise(mu = mean(nb_egg)) |>
-  mutate(full_species = paste0("*T. ", species, "*"))
-
-
-
-plot_dispersal <- ggplot() +
-  stat_pointinterval(
-    data = model1_data,
-    aes(line, dispersal_rate, col = full_species),
-    .width = 0.95
-  ) +
-  geom_point(
-    data = observed_species_disp,
-    aes(line, disp), pch = 21, fill = "white", size = 2
-  ) +
-  scale_color_manual(values = species_palette) +
-  scale_x_discrete("", guide = guide_axis(n.dodge = 2)) +
-  scale_y_continuous("dispersal rate")+ 
-  facet_grid(cols=vars(full_species),scale = "free_x")
-
-plot_dispersal
-
-
-plot_development <- ggplot() +
-  stat_pointinterval(
-    data = model1_data,
-    aes(line, development_time, col=full_species),
-    .width = 0.95
-  ) +
-  geom_point(
-    data = observed_species_dev,
-    aes(line, time), pch = 21, fill = "white", size = 2
-  ) +
-  scale_color_manual(values = species_palette) +
-  scale_x_discrete("", guide = guide_axis(n.dodge = 2)) +
-  scale_y_continuous("development time (days)")+ 
-  facet_grid(cols=vars(full_species),scale = "free_x")
-
-plot_development
-
-plot_fecundity <- ggplot() +
-  stat_pointinterval(
-    data = model1_data,
-    aes(line, mu, col=full_species),
-    .width = 0.95
-  ) +
-  geom_point(
-    data = observed_species_mu,
-    aes(line, mu), pch = 21, fill = "white", size = 2
-  ) +
-  scale_color_manual(values = species_palette) +
-  scale_x_discrete("", guide = guide_axis(n.dodge = 2)) +
-  scale_y_continuous("(fecundity|no retention) \n (nb eggs parasitized/2 days)")+ 
-  facet_grid(cols=vars(full_species),scale = "free_x")
-
-plot_fecundity
-
-plot_zi <- ggplot() +
-  stat_pointinterval(
-    data = model1_data,
-    aes(line, zi, col=full_species),
-    .width = 0.95
-  ) +
-  geom_point(
-    data = observed_species_zi,
-    aes(line, zi), pch = 21, fill = "white", size = 2
-  ) +
-  scale_color_manual(values = species_palette) +
-  scale_x_discrete("", guide = guide_axis(n.dodge = 2)) +
-  scale_y_continuous("retention rate")+ 
-  facet_grid(cols=vars(full_species),scale = "free_x")
-
-plot_zi
-
-(plot_dispersal / plot_development / plot_fecundity / plot_zi) &
-  theme_bw() &
-  theme(legend.position = "none", strip.text.x = element_textbox()) &
-  plot_annotation(tag_levels = "A")
 ```
