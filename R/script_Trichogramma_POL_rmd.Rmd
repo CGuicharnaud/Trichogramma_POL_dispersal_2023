@@ -392,7 +392,7 @@ modcens1_data_dvlp <- unique_lines |>
 # dispersal
 modcens1_data_disp <- unique_lines |>
   add_epred_draws(model1, resp = "dispersal") |>
-  rename(dispersal_rate = .epred)
+  rename(dispersal_probability = .epred)
 
 # fecundity
 modcens1_data_fec <- unique_lines |>
@@ -415,7 +415,7 @@ modcens2_data_dvlp <- unique_lines |>
 
 modcens2_data_disp <- unique_lines |>
   add_epred_draws(model2, resp = "dispersal") |>
-  rename(dispersal_rate = .epred)
+  rename(dispersal_probability = .epred)
 
 
 modcens2_data_fec <- unique_lines |>
@@ -445,7 +445,7 @@ fixed_data_dvlp <- unique_species |>
 
 fixed_data_disp <- unique_species |>
   add_epred_draws(model1, resp = "dispersal", re_formula = NA) |>
-  rename(dispersal_rate = .epred)
+  rename(dispersal_probability = .epred)
 
 
 fixed_data_fec <- unique_species |>
@@ -485,8 +485,8 @@ table_trait_values_retention <- fixed_data |>
 
 table_trait_values_dispersal <- fixed_data |>
   group_by(species) |>
-  mean_hdi(dispersal_rate) |>
-  mutate(dispersal_rate = paste(round(dispersal_rate, 2), " [", round(.lower, 2), "; ", round(.upper, 2), "]", sep = "")) |>
+  mean_hdi(dispersal_probability) |>
+  mutate(dispersal_probability = paste(round(dispersal_probability, 2), " [", round(.lower, 2), "; ", round(.upper, 2), "]", sep = "")) |>
   select(-c(.lower, .upper, .width, .point, .interval))
 
 
@@ -502,7 +502,7 @@ table1
 ```{r compare test, eval = FALSE}
 
 species_compare <- fixed_data |>
-  pivot_longer(cols = c(development_time, dispersal_rate, fecundity, zi, mu), names_to = "trait") |>
+  pivot_longer(cols = c(development_time, dispersal_probability, fecundity, zi, mu), names_to = "trait") |>
   group_by(trait) |>
   compare_levels(variable = value, by = species) |>
   group_by(trait, species) |>
@@ -512,7 +512,7 @@ print(species_compare, n = Inf)
 
 # one can also do it by line (commented out because takes some time, there are a lot of pairwise comparisons between 28 lines)
 # lines_compare <- model1_data |>
-#  pivot_longer(cols=c(development_time,dispersal_rate,fecundity,zi,mu), names_to = "trait") |>
+#  pivot_longer(cols=c(development_time,dispersal_probability,fecundity,zi,mu), names_to = "trait") |>
 #  group_by(trait) |>
 #  compare_levels(variable=value,by=line) |>
 #  group_by(trait,line) |>
@@ -567,14 +567,14 @@ observed_species_mu <- data_Trichogramma |>
 plot_dispersal <- ggplot() +
   stat_pointinterval(
     data = model1_data,
-    aes(full_species, dispersal_rate, group = line),
+    aes(full_species, dispersal_probability, group = line),
     col = "grey70",
     x = position_lines,
     .width = 0.95
   ) +
   stat_eye(
     data = fixed_data,
-    aes(full_species, dispersal_rate, fill = species),
+    aes(full_species, dispersal_probability, fill = species),
     slab_alpha = 0.5,
     .width = c(0.001, 0.95),
     point_interval = "mean_hdi"
@@ -585,7 +585,7 @@ plot_dispersal <- ggplot() +
   )  +
   scale_fill_manual(values = species_palette) +
   scale_x_discrete("", guide = guide_axis(n.dodge = 2)) +
-  scale_y_continuous("dispersal rate") +
+  scale_y_continuous("effective dispersal probability") +
   annotate("text", x=1, y=0.3, label= "a") +
   annotate("text", x=2, y=0.3, label= "a") +
   annotate("text", x=3, y=0.3, label= "a") +
@@ -700,8 +700,8 @@ fig2
 
 # you can save generated figures in 'figures' folder, at the right dimensions using the commented code below:
 
-# ggsave(here("figures", "fig2.pdf"), width = 163, height = 230, dpi = 1200, units = "mm")
-# ggsave(here("figures", "fig2.png"), width = 163, height = 230, dpi = 1200, units = "mm")
+# ggsave(here("figures", "fig2_v2.pdf"), width = 163, height = 230, dpi = 1200, units = "mm")
+# ggsave(here("figures", "fig2_v2.png"), width = 163, height = 230, dpi = 1200, units = "mm")
 ```
 
 ### Figure 3: correlation between development time and fecundity without retention
@@ -740,23 +740,24 @@ figure_POL_development <- model1_data |>
   rename(development.upper = .upper)
 
 figure_POL_line <- figure_POL_development |>
-  left_join(figure_POL_mu)
+  left_join(figure_POL_mu) |>
+  mutate(full_species = paste0("*T. ", species, "*"))
 
 # the plot
 ggplot(data = figure_POL_line) +
   geom_linerange(
     aes(
       y = development_time, x = mu,
-      ymin = development.lower, ymax = development.upper
+      ymin = development.lower, ymax = development.upper , colour = full_species
     ),
-    size = 0.5, alpha = 0.5, colour = "grey70"
+    size = 0.5, alpha = 0.3
   ) +
   geom_linerange(
     aes(
       y = development_time, x = mu,
-      xmin = mu.lower, xmax = mu.upper
+      xmin = mu.lower, xmax = mu.upper , colour = full_species
     ),
-    size = 0.5, alpha = 0.5, colour = "grey70"
+    size = 0.5, alpha = 0.3
   ) +
   geom_point(aes(y = development_time, x = mu), size = 0.5) +
   geom_point(aes(y = development_time, x = mu), size = 0.5, colour = "grey70") +
@@ -780,11 +781,11 @@ ggplot(data = figure_POL_line) +
     y = development_time, x = mu, fill = full_species,
     pch = full_species
   ), size = 4, colour = "black") +
-  xlab("(Fecundity|no retention) (nb eggs parasitized/2 days)") +
+  xlab("Fecundity in absence of retention \n(nb eggs parasitized/2 days)") +
   ylab("Development time (days)") +
   labs(fill = "species", col = "species", shape = "species") +
-  scale_color_manual(values = species_palette) +
-  scale_fill_manual(values = species_palette) +
+  scale_color_manual(values = c(species_palette, species_palette)) +
+  scale_fill_manual(values = c(species_palette, species_palette)) +
   scale_shape_manual(values = 21:25) +
   theme_bw() +
   theme(
@@ -795,8 +796,8 @@ ggplot(data = figure_POL_line) +
 
 # you can save generated figures in 'figures' folder, at the right dimensions using the commented code below:
 
-# ggsave(here("figures", "fig3.pdf"), width = 152, height = 108, dpi = 1200, units = "mm")
-# ggsave(here("figures", "fig3.png"), width = 152, height = 108, dpi = 1200, units = "mm")
+# ggsave(here("figures", "fig3_v2.pdf"), width = 152, height = 108, dpi = 1200, units = "mm")
+# ggsave(here("figures", "fig3_v2.png"), width = 152, height = 108, dpi = 1200, units = "mm")
 ```
 
 ### Table 1: info for correlations tables
@@ -837,13 +838,13 @@ table_cor_LINE <- summary_model1 |>
       str_detect(name, "cor_line__lowbound") ~ "lowbound",
       str_detect(name, "cor_line__zi") ~ "retention_probability",
       str_detect(name, "cor_line__nbegg") ~ "fecundity_noretention",
-      str_detect(name, "cor_line__dispersal") ~ "dispersal_rate"
+      str_detect(name, "cor_line__dispersal") ~ "dispersal_probability"
     ),
     response2 = case_when(
       str_detect(name, "lowbound_Intercept$") ~ "lowbound",
       str_detect(name, "zi_nbegg_Intercept$") ~ "retention_probability",
       str_detect(name, "nbegg_Intercept$") ~ "fecundity_noretention",
-      str_detect(name, "dispersal_Intercept$") ~ "dispersal_rate"
+      str_detect(name, "dispersal_Intercept$") ~ "dispersal_probability"
     ),
   ) |>
   select(response1, response2, value)
@@ -863,13 +864,13 @@ table_cor_fullLINE <- summary_model2 |>
       str_detect(name, "cor_line__lowbound") ~ "development_time",
       str_detect(name, "cor_line__zi") ~ "retention_probability",
       str_detect(name, "cor_line__nbegg") ~ "fecundity_noretention",
-      str_detect(name, "cor_line__dispersal") ~ "dispersal_rate"
+      str_detect(name, "cor_line__dispersal") ~ "dispersal_probability"
     ),
     response2 = case_when(
       str_detect(name, "lowbound_Intercept$") ~ "development_time",
       str_detect(name, "zi_nbegg_Intercept$") ~ "retention_probability",
       str_detect(name, "nbegg_Intercept$") ~ "fecundity_noretention",
-      str_detect(name, "dispersal_Intercept$") ~ "dispersal_rate"
+      str_detect(name, "dispersal_Intercept$") ~ "dispersal_probability"
     ),
   ) |>
   select(response1, response2, value)
