@@ -490,11 +490,11 @@ table_trait_values_dispersal <- fixed_data |>
   select(-c(.lower, .upper, .width, .point, .interval))
 
 
-table1 <- left_join(table_trait_values_development, table_trait_values_fecundity) |>
+table2 <- left_join(table_trait_values_development, table_trait_values_fecundity) |>
   left_join(table_trait_values_retention) |>
   left_join(table_trait_values_dispersal)
 
-table1
+table2
 ```
 
 ### pairwise differences between species (for "significantly different" markers on figure 2)
@@ -800,9 +800,9 @@ ggplot(data = figure_POL_line) +
 # ggsave(here("figures", "fig3_v2.png"), width = 152, height = 108, dpi = 1200, units = "mm")
 ```
 
-### Table 1: info for correlations tables
+### Table 3: info for correlations tables
 
-Now we look at line level correlations between our four traits, with and without species effect (Table 1)
+Now we look at line level correlations between our four traits, with and without species effect (Table 3)
 
 ```{r correlations}
 
