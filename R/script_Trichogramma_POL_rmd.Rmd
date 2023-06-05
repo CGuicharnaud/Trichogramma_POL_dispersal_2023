@@ -528,11 +528,14 @@ species_palette <- c("#E69F00", "#56B4E9", "#009E73", "#F0E442", "#CC79A7")
 # plot position for lines posteriors, to make sure that no lines are hidden by species posterior
 position_lines <- c(0.8,0.9,1.1,1.2,1.8,1.85,1.9,1.95,2.05,2.1,2.15,2.2,2.25,2.85,2.9,2.95,3.05,3.1,3.15,3.2,3.9,4.1,4.2,4.9,4.95,5.05,5.1,5.15)
 
+
 # sorting lines in order of the graphical representation
 model1_data <- model1_data |>
   arrange(species) |>
   group_by(species) |>
   arrange (line, .by_group = TRUE)
+
+model1_data$line <- factor( model1_data$line, levels =  c("ISA11967", "ISA11969", "ISA5544", "ISA6646", "F3-2","F3-9", "F5-11","F5-12", "F5-8", "F6-4","I2-16", "I6-5", "PR002", "BIO-XE", "BIO-XK", "BIO-XA", "N-05", "Q-05", "H-03", "HY-05", "81a", "ISA11235", "ISA11367","FPV025", "PR007", "BL110", "CVR065", "FPV034-A" ))
 
 model1_data$full_species <- paste0("*T. ", model1_data$species, "*")
 fixed_data$full_species <- paste0("*T. ", fixed_data$species, "*")
@@ -615,9 +618,9 @@ plot_development <- ggplot() +
   geom_point(
     data = observed_species_dev,
     aes(full_species, time), pch = 21, fill = "white", size = 2
-  ) +
+  ) +  scale_x_discrete("", guide = guide_axis(n.dodge = 2)) +
   scale_fill_manual(values = species_palette) +
-  scale_x_discrete("", guide = guide_axis(n.dodge = 2)) +
+
   scale_y_continuous("development time (days)") +
   annotate("text", x=1, y=14.9, label= "a") +
   annotate("text", x=2, y=13, label= "b") +
@@ -700,8 +703,8 @@ fig2
 
 # you can save generated figures in 'figures' folder, at the right dimensions using the commented code below:
 
-# ggsave(here("figures", "fig2_v2.pdf"), width = 163, height = 230, dpi = 1200, units = "mm")
-# ggsave(here("figures", "fig2_v2.png"), width = 163, height = 230, dpi = 1200, units = "mm")
+# ggsave(here("figures", "fig2_v3.pdf"), width = 163, height = 230, dpi = 1200, units = "mm")
+# ggsave(here("figures", "fig2_v3.png"), width = 163, height = 230, dpi = 1200, units = "mm")
 ```
 
 ### Figure 3: correlation between development time and fecundity without retention
